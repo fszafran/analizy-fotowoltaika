@@ -7,12 +7,12 @@ import time
 class Category:
     def __init__(self, name):
         self.name = name
-        self.featureList = []
+        self.feature_list = []
     
-    def addFeatureClass(self, featureClass):
-        self.featureList.append(featureClass)
+    def add_feature_class(self, featureClass):
+        self.feature_list.append(featureClass)
 
-def createCategoryList(featureClasses: List[str]) -> List[Category]:
+def create_categories(featureClasses: List[str]) -> List[Category]:
     siecWodna = Category("SiecWodna")
     siecDrogowa = Category("SiecDrogowa")
     lasy = Category("Lasy")
@@ -20,31 +20,33 @@ def createCategoryList(featureClasses: List[str]) -> List[Category]:
     siecEnergetyczna = Category("SiecEnergetyczna")
 
     for fc in featureClasses:
+        print(f"making featureclass:{fc}")
         if re.search(r"SWRS", fc):
-            polygonisedLines = arcpy.analysis.Buffer(fc, f"{fc}_polygon", "1 Meter")
-            siecWodna.addFeatureClass(polygonisedLines)
+            polygonised_layer = arcpy.analysis.Buffer(fc, f"{fc}_polygon", "1 Meter")
+            siecWodna.add_feature_class(polygonised_layer)
             arcpy.management.Delete(fc)
         elif re.search(r"PTWP", fc):
-            siecWodna.addFeatureClass(fc)
+            siecWodna.add_feature_class(fc)
         elif re.search(r"SKJZ", fc):
-            siecDrogowa.addFeatureClass(fc)
+            siecDrogowa.add_feature_class(fc)
         elif re.search(r"BUBD", fc):
-            budynki.addFeatureClass(fc)
+            budynki.add_feature_class(fc)
         elif re.search(r"PTLZ", fc):
-            lasy.addFeatureClass(fc)
+            lasy.add_feature_class(fc)
         elif re.search(r"SULN", fc):
-            siecEnergetyczna.addFeatureClass(fc)
+            siecEnergetyczna.add_feature_class(fc)
+    print("out")
     return [siecWodna, siecDrogowa, lasy, budynki, siecEnergetyczna]
 
-def clipCategoriesToArea(categories: List[Category], area: str) -> None:
+def clip_categories_to_area(categories: List[Category], area: str) -> None:
     for cat in categories:
-        if cat.featureList: 
+        if cat.feature_list: 
             mergeOutput = f"merged_{cat.name}"
             clipOutput = f"clipped_{cat.name}"
-            merged = arcpy.management.Merge(cat.featureList, mergeOutput)
+            merged = arcpy.management.Merge(cat.feature_list, mergeOutput)
             arcpy.analysis.Clip(merged, area, clipOutput)
 
-def getEuclideanDistances() -> List[str]:
+def get_euclidean_distances() -> List[str]:
     clippedCategories = arcpy.ListFeatureClasses("clipped*")
     for layer in clippedCategories:
         if re.search(r"clipped_SiecDrogowa", layer):
@@ -58,7 +60,7 @@ def getEuclideanDistances() -> List[str]:
         dist.save(f"EuCDist_{layer}")
 
 
-def mergeNMTRasters(rasterFolderDirectory: str) -> None:
+def merge_NMTs(rasterFolderDirectory: str) -> None:
     rasters = []
     coordinateSystem = arcpy.SpatialReference(2180)
     for file in os.listdir(rasterFolderDirectory):
@@ -71,7 +73,7 @@ def mergeNMTRasters(rasterFolderDirectory: str) -> None:
         mosaic_method="LAST", pixel_type="32_BIT_FLOAT", cellsize="5"
     )
 
-def clipMergedRasterToArea(mergedRaster: str, area: str) -> None:
+def clip_merged_raster_to_area(mergedRaster: str, area: str) -> None:
     clipped = arcpy.sa.ExtractByMask(
         in_raster=mergedRaster,
         in_mask_data=area,
@@ -80,33 +82,26 @@ def clipMergedRasterToArea(mergedRaster: str, area: str) -> None:
     )
     clipped.save("clipped_NMT")
     
-def getLayersFromDirectoryList(directories: List[str], environment: str) -> None:
+def get_layers_from_directories(directories: List[str], environment: str) -> None:
     print("Getting layers from directories")
     patterns = ["OT_SWRS_L", "OT_BUBD_A", "OT_SKJZ_L", "OT_PTWP_A", "OT_PTLZ_A", "OT_SULN_L"]
-    paths = prepareFileNames(directories)
-    allPT = []
+    paths = prepare_filenames(directories)
     for path in paths:
-        if path.endswith(".shp"):
-            if "_PT" in path:
-                allPT.append(path)
-            if any(pattern in path for pattern in patterns):
-                arcpy.conversion.FeatureClassToGeodatabase(path, environment)
+        if any(pattern in path for pattern in patterns) and path.endswith(".shp"):
+            arcpy.conversion.FeatureClassToGeodatabase(path, environment)
 
-    merged = arcpy.management.Merge(allPT, "PT_merged")
-    arcpy.analysis.Clip(merged, arcpy.env.mask, "PT_merge_cliped")
-
-def prepareFileNames(directories: List[str]) -> List[str]:
+def prepare_filenames(directories: List[str]) -> List[str]:
     patterns = ["OT_SWRS_L", "OT_BUBD_A", "OT_SKJZ_L", "OT_PT", "OT_SULN_L"]
     paths = []
     for directory in directories:
         for file in os.listdir(directory):
             if any(pattern in file for pattern in patterns):
-                sanitizedPath = sanitizePath(directory, os.path.join(directory, file))
+                sanitizedPath = sanitize_path(directory, os.path.join(directory, file))
                 if sanitizedPath:
                     paths.append(sanitizedPath)
     return paths   
 
-def sanitizePath(directory: str, path: str) -> str:
+def sanitize_path(directory: str, path: str) -> str:
     parts = path.split("10k.")
     if len(parts) > 1:
         newPath = os.path.join(directory, parts[1])
@@ -114,60 +109,62 @@ def sanitizePath(directory: str, path: str) -> str:
         return newPath
     return path
 
-def getFuzzyMemForSiecWodna() -> None:
+def woda_criterium() -> None:
     distWoda = "EuCDist_clipped_SiecWodna"
-    maxVal = arcpy.management.GetRasterProperties(distWoda, "MAXIMUM").getOutput(0)
-    first = arcpy.sa.FuzzyMembership(distWoda, arcpy.sa.FuzzyLinear(0, 100))
-    first = arcpy.sa.Reclassify(first, "Value", arcpy.sa.RemapRange([[0, 0.999, 0]]))
-    first.save("strong_woda")
-    second = arcpy.sa.FuzzyMembership(distWoda, arcpy.sa.FuzzyLinear(maxVal, 102))
-    final = arcpy.sa.FuzzyOverlay([first, second], "AND")
+    max_val = arcpy.management.GetRasterProperties(distWoda, "MAXIMUM").getOutput(0)
+    strong = arcpy.sa.FuzzyMembership(distWoda, arcpy.sa.FuzzyLinear(0, 100))
+    strong = arcpy.sa.Reclassify(strong, "Value", arcpy.sa.RemapRange([[0, 0.999, 0]]))
+    strong.save("strong_woda")
+    fuzzy = arcpy.sa.FuzzyMembership(distWoda, arcpy.sa.FuzzyLinear(max_val, 102))
+    final = arcpy.sa.FuzzyOverlay([strong, fuzzy], "AND")
     final.save("fuzzy_siec_wodna")
 
-def getFuzzyMemForSiecDrogowa() -> None:
+def drogi_criterium() -> None:
     drogi = "clipped_SiecDrogowa"
     density = arcpy.sa.LineDensity(drogi, None, cell_size=5, area_unit_scale_factor="SQUARE_KILOMETERS")
     maxVal = arcpy.management.GetRasterProperties(density, "MAXIMUM").getOutput(0)
     fuzz = arcpy.sa.FuzzyMembership(density, arcpy.sa.FuzzyLinear(0, maxVal))
     fuzz.save("fuzzy_siec_drogowa")
 
-def getFuzzyMemForLasy() -> None:
+def lasy_criterium() -> None:
     distLasy = "EuCDist_clipped_Lasy"
-    firstFuzz = arcpy.sa.FuzzyMembership(distLasy, arcpy.sa.FuzzyLinear(0, 15))
-    strong_las = arcpy.sa.Reclassify(firstFuzz, "Value", arcpy.sa.RemapRange([[0, 0.999, 0]]))
-    strong_las.save("strong_lasy")
-    secondFuzz = arcpy.sa.FuzzyMembership(distLasy, arcpy.sa.FuzzyLinear(17, 100))
-    final_fuzz = arcpy.sa.FuzzyOverlay([strong_las, secondFuzz], "AND")
-    final_fuzz.save("fuzzy_lasy")
+    strong = arcpy.sa.FuzzyMembership(distLasy, arcpy.sa.FuzzyLinear(0, 15))
+    strong = arcpy.sa.Reclassify(strong, "Value", arcpy.sa.RemapRange([[0, 0.999, 0]]))
+    strong.save("strong_lasy")
+    fuzzy = arcpy.sa.FuzzyMembership(distLasy, arcpy.sa.FuzzyLinear(17, 100))
+    final = arcpy.sa.FuzzyOverlay([strong, fuzzy], "AND")
+    final.save("fuzzy_lasy")
 
-def getFuzzyMemForBudynki() -> None:
+def budynki_criterium() -> None:
     distBudynki = "EuCDist_clipped_Budynki"
-    maxVal = arcpy.management.GetRasterProperties(distBudynki, "MAXIMUM").getOutput(0)
-    first = arcpy.sa.FuzzyMembership(distBudynki, arcpy.sa.FuzzyLinear(152, maxVal))
-    strong_budynki = arcpy.sa.Reclassify(first, "Value", arcpy.sa.RemapRange([[0.001, 1, 1]]))
+    max_val = arcpy.management.GetRasterProperties(distBudynki, "MAXIMUM").getOutput(0)
+    fuzzy = arcpy.sa.FuzzyMembership(distBudynki, arcpy.sa.FuzzyLinear(152, max_val))
+    strong_budynki = arcpy.sa.Reclassify(fuzzy, "Value", arcpy.sa.RemapRange([[0.001, 1, 1]]))
     strong_budynki.save("strong_budynki")
-    first.save("fuzzy_budynki")
+    fuzzy.save("fuzzy_budynki")
 
-def getSlopeAndAspectFromNMT(raster: str) -> None:
+def get_slope_and_aspect_from_NMT() -> None:
+    raster = "clipped_NMT"
     slope = arcpy.sa.Slope(raster)
     aspect = arcpy.sa.Aspect(raster)
     slope.save("slope_p")
     aspect.save("aspect_p")
 
-def getFuzzyForSlope(slope: str) -> None:
+def slope_criterium() -> None:
+    slope = "slope_p"
     fuzz = arcpy.sa.FuzzyMembership(slope, arcpy.sa.FuzzyLinear(5, 0))
     fuzz = arcpy.sa.Reclassify(fuzz, "Value", arcpy.sa.RemapRange([[0.00001, 1, 1]]))
-    fuzz2 = arcpy.sa.FuzzyMembership(slope, arcpy.sa.FuzzyLinear(10, 0))
-    fuzzfin = arcpy.sa.FuzzyOverlay([fuzz, fuzz2], "OR")
-    fuzzfin.save("fuzzy_slope")
+    fuzz_2 = arcpy.sa.FuzzyMembership(slope, arcpy.sa.FuzzyLinear(10, 0))
+    final = arcpy.sa.FuzzyOverlay([fuzz, fuzz_2], "OR")
+    final.save("fuzzy_slope")
 
-def getMapForAspect() -> None:
-    aspect = arcpy.ListRasters("aspect_p")[0]
+def aspect_criterium() -> None:
+    aspect = "aspect_p"
     remap = arcpy.sa.RemapRange([[-1, -1, 1], [0, 112.5, 0], [112.5, 247.5, 1], [247.5, 360, 0]])
     reclassified = arcpy.sa.Reclassify(aspect, "Value", remap)
     reclassified.save("fuzzy_aspect")
 
-def getMinFromRaster(inRaster: str) -> float:
+def get_min_from_raster(inRaster: str) -> float:
     minVal = float("inf")
     with arcpy.da.SearchCursor(inRaster, ["Value"]) as cursor:
         for row in cursor:
@@ -176,22 +173,24 @@ def getMinFromRaster(inRaster: str) -> float:
                 minVal = v
     return minVal
 
-def distanceCryterium(distanceToTransportLinksRaster: str, obszar: str) -> None:
+def distance_criterium(distanceToTransportLinksRaster: str, obszar: str) -> None:
     clipped = arcpy.ia.Clip(distanceToTransportLinksRaster, obszar)
     clipped.save("clipped_trans_dist")
     maxVal = int(arcpy.management.GetRasterProperties("clipped_trans_dist", "MAXIMUM").getOutput(0))
-    minVal = getMinFromRaster("clipped_trans_dist")
-    maxVal += 500
+    minVal = get_min_from_raster("clipped_trans_dist")
     reclass = arcpy.sa.Reclassify("clipped_trans_dist", "Value", arcpy.sa.RemapRange([[-1, 0, maxVal]]))
     reclass.save("proba")
-    fuzz = arcpy.sa.FuzzyMembership(reclass, arcpy.sa.FuzzyLinear(maxVal, minVal))
-    fuzz.save("fuzzy_transport_links")
+    final = arcpy.sa.FuzzyMembership(reclass, arcpy.sa.FuzzyLinear(maxVal, minVal))
+    final.save("fuzzy_transport_links")
 
-def getMergedStrongs(strongCriteria):
+def get_merged_strongs(strongCriteria):
     strongAll = arcpy.sa.FuzzyOverlay(strongCriteria, "AND")
-    strongAll.save("all_strong")
+    strongAll.save("strong_all")
 
-def getFinalMap(allFuzzy: List[str], weighted: str) -> None:
+def get_raster_weights(rasters: List[str], weights: dict[str:float]) -> List:
+    return [[raster, "Value", weights[raster]] for raster in rasters if raster in weights]
+
+def get_final_map(allFuzzy: List[str], weighted: str) -> None:
     if weighted == "weighted":
         weights = {
         "fuzzy_siec_wodna": 0.15,
@@ -212,32 +211,27 @@ def getFinalMap(allFuzzy: List[str], weighted: str) -> None:
             "fuzzy_transport_links": 1/7,
             "fuzzy_aspect": 1/7
         }
+    raster_weight_list = get_raster_weights(allFuzzy, weights)
+    ws_tbl = arcpy.sa.WSTable(raster_weight_list)   
+    weighted_sum = arcpy.sa.WeightedSum(ws_tbl) 
+    weighted_sum.save(f"fuzzy_all_{weighted}")
 
-    theList = []
-    for raster in allFuzzy:
-        if raster in weights:
-            theList.append([raster, "Value", weights[raster]])
-    wsTable = arcpy.sa.WSTable(theList)   
-    print(wsTable)
-    weightedSum = arcpy.sa.WeightedSum(wsTable) 
-    weightedSum.save(f"fuzzy_all_{weighted}")
+    not_normalized_wlc = arcpy.sa.Times(f"fuzzy_all_{weighted}", "strong_all")
+    not_normalized_wlc.save(f"not_normalized_wlc_{weighted}")
 
-    semifinal = arcpy.sa.Times(f"fuzzy_all_{weighted}", "all_strong")
-    semifinal.save(f"fuzzy_all_semifinal_{weighted}")
-
-    maxval = arcpy.management.GetRasterProperties(f"fuzzy_all_semifinal_{weighted}", "MAXIMUM").getOutput(0)
+    maxval = arcpy.management.GetRasterProperties(f"not_normalized_wlc_{weighted}", "MAXIMUM").getOutput(0)
     maxval = float(maxval.replace(',', '.'))
 
-    border = maxval * 0.6
-    reclass = arcpy.sa.Reclassify(f"fuzzy_all_semifinal_{weighted}", "Value", arcpy.sa.RemapRange([[0, border, 0], [border, maxval, 1]]))
+    border = maxval * 0.7
+    reclass = arcpy.sa.Reclassify(f"not_normalized_wlc_{weighted}", "Value", arcpy.sa.RemapRange([[0, border, 0], [border, maxval, 1]]))
     reclass.save(f"final_mapp_{weighted}")
 
-def distanceBetweenPoints(point1, point2):
+def distance_between_points(point1, point2):
     point1 = arcpy.PointGeometry(point1)
     point2 = arcpy.PointGeometry(point2)
     return point1.distanceTo(point2)
 
-def prepareDzialki(dzialki: str, obszar_oryg: str) -> None:
+def prepare_dzialki(dzialki: str, obszar_oryg: str) -> None:
     arcpy.analysis.Intersect(
     in_features=f"{dzialki} #;{obszar_oryg} #",
     out_feature_class="dzialki_s",
@@ -246,7 +240,7 @@ def prepareDzialki(dzialki: str, obszar_oryg: str) -> None:
     output_type="INPUT"
 )
 
-def prepareObszar(obszar_input: str) -> None:
+def prepare_obszar(obszar_input: str) -> None:
     arcpy.analysis.Buffer(obszar_input, "obszar_s", "150 Meters", "FULL", "ROUND", "NONE", None, "PLANAR")
 
 def dealWithDzialki(weighted: str):
@@ -268,10 +262,10 @@ def dealWithDzialki(weighted: str):
             vertices = [point for point in polygon.getPart(0)]
             if len(vertices) >= 4:
                 side_lengths = [
-                    distanceBetweenPoints(vertices[0], vertices[1]),
-                    distanceBetweenPoints(vertices[1], vertices[2]),
-                    distanceBetweenPoints(vertices[2], vertices[3]),
-                    distanceBetweenPoints(vertices[3], vertices[0])
+                    distance_between_points(vertices[0], vertices[1]),
+                    distance_between_points(vertices[1], vertices[2]),
+                    distance_between_points(vertices[2], vertices[3]),
+                    distance_between_points(vertices[3], vertices[0])
                 ]
                 row[1] = min(side_lengths)
             cursor.updateRow(row)
@@ -356,12 +350,11 @@ def get_costpath_energetic(weighted: str):
         destination_field="OBJECTID",
         force_flow_direction_convention="INPUT_RANGE"
     )
-    #TODO: wybrać działke ktora intersektuje
     cost_path.save(f"cost_path_energetic_{weighted}")
     
 if __name__ == "__main__":
     start = time.time()
-    WORKSPACE = r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\analiz1\MyProject\costam.gdb"
+    WORKSPACE = r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\analiz1\MyProject\tt.gdb"
     # r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\analiz1\MyProject\testowa.gdb"
     OBSZAR_INPUT = "swieradow_zdroj_granice"
     DZIALKI_INPUT = "dzialki_tarnowski"
@@ -390,49 +383,83 @@ if __name__ == "__main__":
     TRAVELTIME_RASTER = arcpy.ListRasters("zasieg_fin_tif")[0]
     # Data preparation
     # Rasters
-    mergeNMTRasters(RASTER_FOLDER_DIRECTORY)
+    merge_NMTs(RASTER_FOLDER_DIRECTORY)
     raster = arcpy.Raster(f"{RASTER_FOLDER_DIRECTORY}\merged_raster.tif")
-    clipMergedRasterToArea(raster, OBSZAR)
+    clip_merged_raster_to_area(raster, OBSZAR)
 
     # Vectors
-    getLayersFromDirectoryList(DIRECTORIES, WORKSPACE)
+    get_layers_from_directories(DIRECTORIES, WORKSPACE)
     featureClasses = arcpy.ListFeatureClasses()
-    allCategories = createCategoryList(featureClasses)
-    clipCategoriesToArea(allCategories, OBSZAR)
+    print(featureClasses)
+    allCategories = create_categories(featureClasses)
+    print("categories out")
+    clip_categories_to_area(allCategories, OBSZAR)
     
     # Analysis
-    getEuclideanDistances()
+    print("Running get_euclidean_distances")
+    get_euclidean_distances()
 
     # Siec drogowa
-    getFuzzyMemForSiecDrogowa()
+    print("Running drogi_criterium")
+    drogi_criterium()
 
     # Siec wodna
-    getFuzzyMemForSiecWodna()
-    
+    print("Running woda_criterium")
+    woda_criterium()
+
     # Lasy
-    getFuzzyMemForLasy()
+    print("Running lasy_criterium")
+    lasy_criterium()
 
     # Budynki
-    getFuzzyMemForBudynki()
+    print("Running budynki_criterium")
+    budynki_criterium()
 
     # Slope and aspect
-    getSlopeAndAspectFromNMT("clipped_NMT")
-    getFuzzyForSlope("slope_p")
-    getMapForAspect()
-    distRaster = TRAVELTIME_RASTER
-    distanceCryterium(distRaster, OBSZAR)
+    print("Running get_slope_and_aspect_from_NMT")
+    get_slope_and_aspect_from_NMT()
 
+    print("Running slope_criterium")
+    slope_criterium()
+
+    print("Running aspect_criterium")
+    aspect_criterium()
+
+    distRaster = TRAVELTIME_RASTER
+    print("Running distance_criterium")
+    distance_criterium(distRaster, OBSZAR)
+
+    print("Running get_merged_strongs")
     strongCriterias = arcpy.ListRasters("strong*")
-    getMergedStrongs(strongCriterias)
+    get_merged_strongs(strongCriterias)
+
+    print("Running get_final_map for weighted")
     allFuzzy = arcpy.ListRasters("fuzzy*")
-    getFinalMap(allFuzzy, "weighted")
-    getFinalMap(allFuzzy, "unweighted")
+    get_final_map(allFuzzy, "weighted")
+
+    print("Running get_final_map for unweighted")
+    get_final_map(allFuzzy, "unweighted")
+
+    print("Running dealWithDzialki for weighted")
     dealWithDzialki("weighted")
+
+    print("Running dealWithDzialki for unweighted")
     dealWithDzialki("unweighted")
+
+    print("Running get_costraster_pt")
     get_costraster_pt()
+
+    print("Running get_costmap_pt for weighted")
     get_costmap_pt("weighted")
+
+    print("Running get_costmap_pt for unweighted")
     get_costmap_pt("unweighted")
+
+    print("Running get_costpath_energetic for weighted")
     get_costpath_energetic("weighted")
+
+    print("Running get_costpath_energetic for unweighted")
     get_costpath_energetic("unweighted")
+
     end = time.time()
     print(f"Time elapsed: {end - start}")
