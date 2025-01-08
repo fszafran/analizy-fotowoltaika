@@ -181,7 +181,7 @@ def distance_criterium(distanceToTransportLinksRaster: str, obszar: str) -> None
     final = arcpy.sa.FuzzyMembership(reclass, arcpy.sa.FuzzyLinear(maxVal, minVal))
     final.save("fuzzy_transport_links")
 
-def get_merged_strongs():
+def get_merged_strongs() -> None:
     strongCriteria = arcpy.ListRasters("strong*")
     strongAll = arcpy.sa.FuzzyOverlay(strongCriteria, "AND")
     strongAll.save("strong_all")
@@ -227,7 +227,7 @@ def get_final_map(weighted: str) -> None:
     reclass = arcpy.sa.Reclassify(f"not_normalized_wlc_{weighted}", "Value", arcpy.sa.RemapRange([[0, border, 0], [border, maxval, 1]]))
     reclass.save(f"final_mapp_{weighted}")
 
-def distance_between_points(point1, point2):
+def distance_between_points(point1, point2) -> float:
     point1 = arcpy.PointGeometry(point1)
     point2 = arcpy.PointGeometry(point2)
     return point1.distanceTo(point2)
@@ -256,7 +256,7 @@ def select_dzialki(weighted: str) -> None:
     layer = arcpy.management.MakeFeatureLayer(in_features=summarized, out_layer=f"useful_dzialki_{weighted}", where_clause="sum_Shape_Area >= Shape_Area * 0.5")
     arcpy.conversion.FeatureClassToGeodatabase(layer, WORKSPACE)
 
-def select_obszar(weighted: str, WORKSPACE) -> None:
+def select_obszar(weighted: str, WORKSPACE: str) -> None:
     select_dzialki(weighted)
     dzialki_gdb = arcpy.ListFeatureClasses(f"useful_dzialki_{weighted}")[0]
     dzialki_dissolved = arcpy.management.Dissolve(dzialki_gdb, f"dzialki_dissolved_{weighted}", None, None, "SINGLE_PART", None)
@@ -285,7 +285,7 @@ def select_obszar(weighted: str, WORKSPACE) -> None:
     )
     arcpy.conversion.FeatureClassToGeodatabase(dzialki_final, WORKSPACE)
 
-def calculate_field_pt(pt_layer: str):
+def calculate_field_pt(pt_layer: str) -> str:
     x_kod_to_cost = {
     "PTWP01": 0, 
     "PTWP02": 200,
@@ -336,13 +336,13 @@ def get_costraster_pt(pt_layer: str) -> None:
     pt = calculate_field_pt(pt_layer)
     arcpy.conversion.FeatureToRaster(pt, "koszt", "cost_raster_pt", 5)
 
-def get_costmap_pt(weighted: str):
+def get_costmap_pt(weighted: str) -> None:
     cost_raster = "cost_raster_pt"
     set_null_result = arcpy.sa.SetNull(cost_raster, cost_raster, "VALUE = 0")
     cost_distance = arcpy.sa.DistanceAccumulation(in_source_data=f"dzialki_final_{weighted}", in_cost_raster=set_null_result, out_back_direction_raster=f"backlink_raster_pt_{weighted}")
     cost_distance.save(f"cost_distance_pt_{weighted}")
 
-def get_dzialka_naj(weighted: str):
+def get_dzialka_naj(weighted: str) -> None:
     cost_distance = f"cost_distance_pt_{weighted}"
     backlink = f"backlink_raster_pt_{weighted}"
     siec_energetyczna = "clipped_SiecEnergetyczna"
@@ -368,8 +368,10 @@ def get_dzialka_naj(weighted: str):
     )
     arcpy.conversion.FeatureClassToGeodatabase(selected_obszar, WORKSPACE)
     
+
 if __name__ == "__main__":
     start = time.time()
+
     # ----------------- DANE DO UZUPELNIENIA -----------------
     WORKSPACE = r"sciezka/do/geodatabase"
     arcpy.env.workspace = WORKSPACE
@@ -384,10 +386,13 @@ if __name__ == "__main__":
     RASTER_FOLDER_DIRECTORY = "sciezka/do/folderu/z/rastrami_nmt"
     # ---------------------------------------------------------
 
+
+    # ----------------- PRZYGOTOWYWANIE DANYCH -----------------
     prepare_obszar(OBSZAR_INPUT)
     prepare_dzialki(DZIALKI_INPUT, OBSZAR_INPUT)
     OBSZAR = "obszar_s"
     DZIALKI = "dzialki_s"
+    
     arcpy.env.extent = OBSZAR
     arcpy.env.outputCoordinateSystem = arcpy.SpatialReference(2180)
     arcpy.env.cellSize = 5
@@ -396,34 +401,28 @@ if __name__ == "__main__":
     arcpy.env.overwriteOutput = True
     arcpy.env.addOutputsToMap = False
 
-    # Data preparation
-    # Rasters
     merge_NMTs(RASTER_FOLDER_DIRECTORY)
     raster = arcpy.Raster(f"{RASTER_FOLDER_DIRECTORY}\merged_raster.tif")
     clip_merged_raster_to_area(raster, OBSZAR)
 
-    # Vectors
     get_layers_from_directories(DIRECTORIES, WORKSPACE)
     featureClasses = arcpy.ListFeatureClasses()
     allCategories = create_categories(featureClasses)
     clip_categories_to_area(allCategories, OBSZAR)
-    
-    # Analysis
-    get_euclidean_distances()
 
-    # Siec drogowa
+    get_euclidean_distances()
+    # ---------------------------------------------------------
+
+
+    #----------------- ANALIZA KRYTERIOW -----------------
     drogi_criterium()
 
-    # Siec wodna
     woda_criterium()
 
-    # Lasy
     lasy_criterium()
 
-    # Budynki
     budynki_criterium()
 
-    # Slope and aspect
     get_slope_and_aspect_from_NMT()
 
     slope_criterium()
@@ -451,6 +450,8 @@ if __name__ == "__main__":
     get_dzialka_naj("weighted")
 
     get_dzialka_naj("unweighted")
+    # ---------------------------------------------------------
+
 
     end = time.time()
     print(f"Time elapsed: {(end - start) / 60} minutes")
