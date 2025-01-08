@@ -20,7 +20,6 @@ def create_categories(featureClasses: List[str]) -> List[Category]:
     siecEnergetyczna = Category("SiecEnergetyczna")
 
     for fc in featureClasses:
-        print(f"making featureclass:{fc}")
         if re.search(r"SWRS", fc):
             polygonised_layer = arcpy.analysis.Buffer(fc, f"{fc}_polygon", "1 Meter")
             siecWodna.add_feature_class(polygonised_layer)
@@ -35,7 +34,6 @@ def create_categories(featureClasses: List[str]) -> List[Category]:
             lasy.add_feature_class(fc)
         elif re.search(r"SULN", fc):
             siecEnergetyczna.add_feature_class(fc)
-    print("out")
     return [siecWodna, siecDrogowa, lasy, budynki, siecEnergetyczna]
 
 def clip_categories_to_area(categories: List[Category], area: str) -> None:
@@ -183,14 +181,17 @@ def distance_criterium(distanceToTransportLinksRaster: str, obszar: str) -> None
     final = arcpy.sa.FuzzyMembership(reclass, arcpy.sa.FuzzyLinear(maxVal, minVal))
     final.save("fuzzy_transport_links")
 
-def get_merged_strongs(strongCriteria):
+def get_merged_strongs():
+    strongCriteria = arcpy.ListRasters("strong*")
     strongAll = arcpy.sa.FuzzyOverlay(strongCriteria, "AND")
     strongAll.save("strong_all")
 
 def get_raster_weights(rasters: List[str], weights: dict[str:float]) -> List:
     return [[raster, "Value", weights[raster]] for raster in rasters if raster in weights]
 
-def get_final_map(allFuzzy: List[str], weighted: str) -> None:
+def get_final_map(weighted: str) -> None:
+    allFuzzy = arcpy.ListRasters("fuzzy*")
+    PROG = 0.7
     if weighted == "weighted":
         weights = {
         "fuzzy_siec_wodna": 0.15,
@@ -222,7 +223,7 @@ def get_final_map(allFuzzy: List[str], weighted: str) -> None:
     maxval = arcpy.management.GetRasterProperties(f"not_normalized_wlc_{weighted}", "MAXIMUM").getOutput(0)
     maxval = float(maxval.replace(',', '.'))
 
-    border = maxval * 0.7
+    border = maxval * PROG
     reclass = arcpy.sa.Reclassify(f"not_normalized_wlc_{weighted}", "Value", arcpy.sa.RemapRange([[0, border, 0], [border, maxval, 1]]))
     reclass.save(f"final_mapp_{weighted}")
 
@@ -232,25 +233,31 @@ def distance_between_points(point1, point2):
     return point1.distanceTo(point2)
 
 def prepare_dzialki(dzialki: str, obszar_oryg: str) -> None:
-    arcpy.analysis.Intersect(
-    in_features=f"{dzialki} #;{obszar_oryg} #",
-    out_feature_class="dzialki_s",
-    join_attributes="ALL",
-    cluster_tolerance=None,
-    output_type="INPUT"
-)
+    if not arcpy.ListFeatureClasses("dzialki_s"):
+        arcpy.analysis.Intersect(
+        in_features=f"{dzialki} #;{obszar_oryg} #",
+        out_feature_class="dzialki_s",
+        join_attributes="ALL",
+        cluster_tolerance=None,
+        output_type="INPUT"
+        )
 
 def prepare_obszar(obszar_input: str) -> None:
-    arcpy.analysis.Buffer(obszar_input, "obszar_s", "150 Meters", "FULL", "ROUND", "NONE", None, "PLANAR")
+    if not arcpy.ListFeatureClasses("obszar_s"):
+         arcpy.analysis.Buffer(obszar_input, "obszar_s", "150 Meters", "FULL", "ROUND", "NONE", None, "PLANAR")
+   
 
-def dealWithDzialki(weighted: str):
-    final_map_weighted = f"final_mapp_{weighted}"
+def select_dzialki(weighted: str) -> None:
+    final_map = f"final_mapp_{weighted}"
     dzialki = "dzialki_s"
-    set_null_result = arcpy.sa.SetNull(final_map_weighted, final_map_weighted, "VALUE = 0")
+    set_null_result = arcpy.sa.SetNull(final_map, final_map, "VALUE = 0")
     useful_polygons = arcpy.conversion.RasterToPolygon(set_null_result, f"polygons_rasterized_{weighted}", "NO_SIMPLIFY")
     summarized = arcpy.analysis.SummarizeWithin(in_polygons=dzialki,in_sum_features=useful_polygons,out_feature_class=f"summarized_in_dzialki_{weighted}", keep_all_polygons="ONLY_INTERSECTING", sum_fields="Shape_Area Sum", sum_shape="ADD_SHAPE_SUM", shape_unit="SQUAREMETERS", group_field=None,add_min_maj="NO_MIN_MAJ", add_group_percent="NO_PERCENT", out_group_table=None)
     layer = arcpy.management.MakeFeatureLayer(in_features=summarized, out_layer=f"useful_dzialki_{weighted}", where_clause="sum_Shape_Area >= Shape_Area * 0.5")
     arcpy.conversion.FeatureClassToGeodatabase(layer, WORKSPACE)
+
+def select_obszar(weighted: str, WORKSPACE) -> None:
+    select_dzialki(weighted)
     dzialki_gdb = arcpy.ListFeatureClasses(f"useful_dzialki_{weighted}")[0]
     dzialki_dissolved = arcpy.management.Dissolve(dzialki_gdb, f"dzialki_dissolved_{weighted}", None, None, "SINGLE_PART", None)
     bbox_layer = arcpy.management.MinimumBoundingGeometry(dzialki_dissolved, f"bbox_{weighted}", "RECTANGLE_BY_WIDTH")
@@ -271,14 +278,14 @@ def dealWithDzialki(weighted: str):
             cursor.updateRow(row)
             
     arcpy.management.JoinField(dzialki_dissolved, "OBJECTID", bbox_layer, "OBJECTID", "width")
-    final = arcpy.management.MakeFeatureLayer(
-    in_features=f"dzialki_dissolved_{weighted}",
-    out_layer=f"dzialki_final_{weighted}",
-    where_clause="Shape_Area >= 20000 And width >= 50"
+    dzialki_final = arcpy.management.MakeFeatureLayer(
+        in_features=f"dzialki_dissolved_{weighted}",
+        out_layer=f"dzialki_final_{weighted}",
+        where_clause="Shape_Area >= 20000 And width >= 50"
     )
-    arcpy.conversion.FeatureClassToGeodatabase(final, WORKSPACE)
+    arcpy.conversion.FeatureClassToGeodatabase(dzialki_final, WORKSPACE)
 
-def calculate_field_pt():
+def calculate_field_pt(pt_layer: str):
     x_kod_to_cost = {
     "PTWP01": 0, 
     "PTWP02": 200,
@@ -316,19 +323,17 @@ def calculate_field_pt():
     "PTNZ01": 150,
     "PTNZ02": 150
     }
-    pt = "PT_merge_cliped"
-    
-    arcpy.management.AddField(pt, "koszt", "SHORT")
+    arcpy.management.AddField(pt_layer, "koszt", "SHORT")
 
-    with arcpy.da.UpdateCursor(pt, ["X_KOD", "koszt"]) as cursor:
+    with arcpy.da.UpdateCursor(pt_layer, ["x_kod", "koszt"]) as cursor:
         for row in cursor:
             x_kod = row[0]
             row[1] = x_kod_to_cost[x_kod]
             cursor.updateRow(row)
-    return pt
+    return pt_layer
 
-def get_costraster_pt():
-    pt = calculate_field_pt()
+def get_costraster_pt(pt_layer: str) -> None:
+    pt = calculate_field_pt(pt_layer)
     arcpy.conversion.FeatureToRaster(pt, "koszt", "cost_raster_pt", 5)
 
 def get_costmap_pt(weighted: str):
@@ -337,10 +342,9 @@ def get_costmap_pt(weighted: str):
     cost_distance = arcpy.sa.DistanceAccumulation(in_source_data=f"dzialki_final_{weighted}", in_cost_raster=set_null_result, out_back_direction_raster=f"backlink_raster_pt_{weighted}")
     cost_distance.save(f"cost_distance_pt_{weighted}")
 
-def get_costpath_energetic(weighted: str):
+def get_dzialka_naj(weighted: str):
     cost_distance = f"cost_distance_pt_{weighted}"
     backlink = f"backlink_raster_pt_{weighted}"
-    dzialki = f"dzialki_final_{weighted}"
     siec_energetyczna = "clipped_SiecEnergetyczna"
     cost_path = arcpy.sa.CostPath(
         in_destination_data=siec_energetyczna,
@@ -351,25 +355,37 @@ def get_costpath_energetic(weighted: str):
         force_flow_direction_convention="INPUT_RANGE"
     )
     cost_path.save(f"cost_path_energetic_{weighted}")
+    dzialki_before_naj = f"dzialki_przed_naj_{weighted}"
+    arcpy.management.CopyFeatures(f"dzialki_final_{weighted}", dzialki_before_naj)
+    arcpy.conversion.RasterToPolyline(cost_path, "przylacze", "ZERO")
+    selected_obszar = arcpy.management.SelectLayerByLocation(
+        in_layer=f"dzialki_final_{weighted}",
+        overlap_type="INTERSECT",
+        select_features="przylacze",
+        search_distance=None,
+        selection_type="NEW_SELECTION",
+        invert_spatial_relationship="NOT_INVERT"
+    )
+    arcpy.conversion.FeatureClassToGeodatabase(selected_obszar, WORKSPACE)
     
 if __name__ == "__main__":
     start = time.time()
-    WORKSPACE = r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\analiz1\MyProject\tt.gdb"
-    # r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\analiz1\MyProject\testowa.gdb"
-    OBSZAR_INPUT = "swieradow_zdroj_granice"
-    DZIALKI_INPUT = "dzialki_tarnowski"
-    DIRECTORIES = [
-        # r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\dane_test\powiat_tarnowski_bdot\1216_SHP",
-        r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\bdot_lwowecki",
-        r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\bdot_lubanski"
-    ]
-    RASTER_FOLDER_DIRECTORY = r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\cw1\nmt_swieradow"
-    # r"C:\Users\filo1\Desktop\szkola_sem5\analizy_przestrzenne\dane_test\nmt_tarnow"
-    
-
+    # ----------------- DANE DO UZUPELNIENIA -----------------
+    WORKSPACE = r"sciezka/do/geodatabase"
     arcpy.env.workspace = WORKSPACE
-    # prepareObszar(OBSZAR_INPUT)
-    # prepareDzialki(DZIALKI_INPUT, OBSZAR_INPUT)
+
+    TRAVELTIME_RASTER = arcpy.ListRasters("nazwa_rastra_czasu_dojazdu_do_wezlow_komunikacyjnych_w_bazie_danych")[0]
+    OBSZAR_INPUT = "nazwa_warstwy_obszaru_wybranej_gminy_w_bazie_danych"
+    DZIALKI_INPUT = "nazwa_warstwy_dzialek_w_bazie_danych"
+    PT_INPUT = "nazwa_warstwy_pokrycia_terenu_w_bazie_danych"
+    DIRECTORIES = [
+        "sciezka(ki)/do/folderu(ow)/bdot10k"
+    ]
+    RASTER_FOLDER_DIRECTORY = "sciezka/do/folderu/z/rastrami_nmt"
+    # ---------------------------------------------------------
+
+    prepare_obszar(OBSZAR_INPUT)
+    prepare_dzialki(DZIALKI_INPUT, OBSZAR_INPUT)
     OBSZAR = "obszar_s"
     DZIALKI = "dzialki_s"
     arcpy.env.extent = OBSZAR
@@ -380,7 +396,6 @@ if __name__ == "__main__":
     arcpy.env.overwriteOutput = True
     arcpy.env.addOutputsToMap = False
 
-    TRAVELTIME_RASTER = arcpy.ListRasters("zasieg_fin_tif")[0]
     # Data preparation
     # Rasters
     merge_NMTs(RASTER_FOLDER_DIRECTORY)
@@ -390,76 +405,52 @@ if __name__ == "__main__":
     # Vectors
     get_layers_from_directories(DIRECTORIES, WORKSPACE)
     featureClasses = arcpy.ListFeatureClasses()
-    print(featureClasses)
     allCategories = create_categories(featureClasses)
-    print("categories out")
     clip_categories_to_area(allCategories, OBSZAR)
     
     # Analysis
-    print("Running get_euclidean_distances")
     get_euclidean_distances()
 
     # Siec drogowa
-    print("Running drogi_criterium")
     drogi_criterium()
 
     # Siec wodna
-    print("Running woda_criterium")
     woda_criterium()
 
     # Lasy
-    print("Running lasy_criterium")
     lasy_criterium()
 
     # Budynki
-    print("Running budynki_criterium")
     budynki_criterium()
 
     # Slope and aspect
-    print("Running get_slope_and_aspect_from_NMT")
     get_slope_and_aspect_from_NMT()
 
-    print("Running slope_criterium")
     slope_criterium()
 
-    print("Running aspect_criterium")
     aspect_criterium()
 
-    distRaster = TRAVELTIME_RASTER
-    print("Running distance_criterium")
-    distance_criterium(distRaster, OBSZAR)
+    distance_criterium(TRAVELTIME_RASTER, OBSZAR)
 
-    print("Running get_merged_strongs")
-    strongCriterias = arcpy.ListRasters("strong*")
-    get_merged_strongs(strongCriterias)
+    get_merged_strongs()
 
-    print("Running get_final_map for weighted")
-    allFuzzy = arcpy.ListRasters("fuzzy*")
-    get_final_map(allFuzzy, "weighted")
+    get_final_map("weighted")
 
-    print("Running get_final_map for unweighted")
-    get_final_map(allFuzzy, "unweighted")
+    get_final_map("unweighted")
 
-    print("Running dealWithDzialki for weighted")
-    dealWithDzialki("weighted")
+    select_obszar("weighted", WORKSPACE)
 
-    print("Running dealWithDzialki for unweighted")
-    dealWithDzialki("unweighted")
+    select_obszar("unweighted", WORKSPACE)
 
-    print("Running get_costraster_pt")
-    get_costraster_pt()
+    get_costraster_pt(PT_INPUT)
 
-    print("Running get_costmap_pt for weighted")
     get_costmap_pt("weighted")
 
-    print("Running get_costmap_pt for unweighted")
     get_costmap_pt("unweighted")
 
-    print("Running get_costpath_energetic for weighted")
-    get_costpath_energetic("weighted")
+    get_dzialka_naj("weighted")
 
-    print("Running get_costpath_energetic for unweighted")
-    get_costpath_energetic("unweighted")
+    get_dzialka_naj("unweighted")
 
     end = time.time()
-    print(f"Time elapsed: {end - start}")
+    print(f"Time elapsed: {(end - start) / 60} minutes")
